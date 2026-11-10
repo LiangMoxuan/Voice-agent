@@ -1,0 +1,28 @@
+# ===== Python =====
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+
+# ===== 虚拟环境 =====
+.venv/
+venv/
+env/
+
+# ===== 密钥与本地数据（绝对不能提交）=====
+.env
+data/
+*.db
+*.sqlite
+*.sqlite3
+*.log
+
+# ===== 编辑器 / 系统 =====
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

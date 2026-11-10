@@ -1,0 +1,19 @@
+# 必说/禁语词表（C 出通用版，官方资料包到手后整份替换为 official-v1）
+version: generic-v1
+banned:
+  - 绝对保证
+  - "100%"
+  - 肯定赚钱
+  - 不买就亏了
+  - 最后一次机会
+  - 包您满意
+must_say:
+  GREETING: "(京东)?客服.*(身份|小智)"
+  SOLUTION: "9折.*12个月|到期(前)?提醒"
+  COMPLETED: "再见|感谢"
+privacy_pattern: "1[3-9]\\d{9}"
+fallback_text: "不好意思，这个问题我帮您转接人工客服，请稍等。"
+transfer_to_human:
+  consecutive_fail: 3
+  refuse_times: 2
+  tool_unavailable: 1
