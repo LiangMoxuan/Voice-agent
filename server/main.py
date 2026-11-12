@@ -12,11 +12,14 @@ from fastapi.staticfiles import StaticFiles  # noqa: E402
 from server.logging_mw import logging_mw  # noqa: E402
 from server.agent.routes import router as agent_router  # noqa: E402
 from server.tools.mock_api import router as mock_router  # noqa: E402
+from server.inspect_api import router as inspect_router  # noqa: E402
+from server.turns import recorder  # noqa: E402
 
 app = FastAPI(title="voice-agent")
 app.middleware("http")(logging_mw)
 app.include_router(agent_router)
 app.include_router(mock_router)
+app.include_router(inspect_router)
 
 
 @app.get("/health")
@@ -26,7 +29,11 @@ def health():
 
 @app.websocket("/ws/control")
 async def control(ws: WebSocket):
-    """Day1 只做回声，证明协议链路通。Day3 之后接真总线（A 负责音频侧）。"""
+    """控制信道：Day3 起每条协议消息先落库，再回回声证明链路通。
+
+    回声是 Day1 留下的临时行为，A/B 接上真链路后可直接删掉发送那三行，
+    落库这一行必须留着 —— 第 9 章评测、第 11 章看板都靠它取数。
+    """
     await ws.accept()
     try:
         while True:
@@ -35,8 +42,10 @@ async def control(ws: WebSocket):
                 msg = json.loads(raw)
             except json.JSONDecodeError:
                 msg = {"type": "raw", "error": "invalid_json"}
+            recorded = recorder.handle(msg)
             await ws.send_text(json.dumps(
-                {"type": "echo", "received": msg}, ensure_ascii=False))
+                {"type": "echo", "received": msg, "recorded": recorded},
+                ensure_ascii=False))
     except WebSocketDisconnect:
         return
 
