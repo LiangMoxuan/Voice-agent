@@ -52,12 +52,13 @@ echo ""
 
 echo "5/10 服务能否启动并返回健康检查"
 if [ -x .venv/bin/python ]; then
-  .venv/bin/python -m uvicorn server.main:app --port 8000 >/tmp/uvicorn.log 2>&1 &
+  nohup .venv/bin/python -m uvicorn server.main:app --port 8000 >/tmp/uvicorn.log 2>&1 &
   pid=$!
-  sleep 4
+  sleep 5
   body=$(curl -s --max-time 5 http://127.0.0.1:8000/health)
-  kill $pid >/dev/null 2>&1
-  wait $pid 2>/dev/null
+  kill -TERM $pid >/dev/null 2>&1
+  sleep 1
+  kill -9 $pid >/dev/null 2>&1
   if echo "$body" | grep -q '"ok"'; then
     pass "健康检查返回: $body"
   else
@@ -96,8 +97,16 @@ echo ""
 echo "10/10 本地与远端是否同步"
 if git rev-parse HEAD >/dev/null 2>&1; then
   local_h=$(git rev-parse --short HEAD)
-  remote_h=$(git ls-remote origin 2>/dev/null | head -1 | cut -c1-7)
-  if [ "$local_h" = "$remote_h" ]; then
+  # 加超时保护：远端查询最多等 20 秒，超时就判为未过
+  GIT_TERMINAL_PROMPT=0 git ls-remote origin >/tmp/lsremote.tmp 2>/dev/null &
+  lp=$!
+  n=0
+  while kill -0 $lp 2>/dev/null && [ $n -lt 20 ]; do sleep 1; n=$((n+1)); done
+  kill -9 $lp >/dev/null 2>&1
+  remote_h=$(head -1 /tmp/lsremote.tmp 2>/dev/null | cut -c1-7)
+  if [ -z "$remote_h" ]; then
+    fail "连不上 GitHub（20 秒无响应）" "换个时间重跑本脚本，或检查网络"
+  elif [ "$local_h" = "$remote_h" ]; then
     pass "本地 $local_h 与 GitHub $remote_h 一致"
   else
     fail "本地 $local_h / GitHub $remote_h 不一致" "执行: git push origin main"
