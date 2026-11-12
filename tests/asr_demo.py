@@ -1,79 +1,116 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""第 3 天 L1：录音 -> 识别 -> 在终端打印文字（对应指南 7.2）
+"""Day2 验收项：语音识别演示（把一段中文录音转成文字）
 
 用法：
-    python tests/asr_demo.py 你的录音.wav
+    python tests/asr_demo.py reply.wav
+    python tests/asr_demo.py ~/Desktop/我的录音.wav
 
-录音要求：16kHz、单声道、PCM 的 wav。
-macOS 转换方法（有 m4a/mp3 时）：
-    afconvert -f WAVE -d LEI16@16000 -c 1 输入.m4a tests/sample.wav
-    （afconvert 是 macOS 自带，不需要装 ffmpeg）
+支持两种 Key（脚本自动判断）：
+  1. sk-sp- 开头 → 阿里云百炼 Token Plan 套餐专属 Key
+     接口：/api/v1/services/aigc/multimodal-generation/generation
+     模型：qwen-audio-3.0-asr-flash（非实时，单段 ≤5 分钟）
+     音频以 Base64 Data URI 上传，无需公网地址
+  2. sk- 开头（普通百炼按量付费 Key）→ dashscope SDK + paraformer-realtime-v2
 """
 import os
 import sys
-import wave
+import json
+import base64
+import pathlib
 
-def die(msg, hint=""):
-    print("\n[错误] " + msg)
-    if hint:
-        print("[怎么办] " + hint)
+from dotenv import load_dotenv
+import requests
+
+ROOT = pathlib.Path(__file__).resolve().parent.parent
+load_dotenv(ROOT / ".env")
+
+TOKEN_PLAN_URL = "https://token-plan.cn-beijing.maas.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation"
+
+MIME = {
+    "wav": "audio/wav", "mp3": "audio/mpeg", "m4a": "audio/mp4",
+    "ogg": "audio/ogg", "opus": "audio/opus", "flac": "audio/flac",
+}
+
+
+def die(msg, tips):
+    print(f"\n[错误] {msg}")
+    for t in tips:
+        print(f"[怎么办] {t}")
     sys.exit(1)
 
-# ---------- 1. 依赖 ----------
-try:
+
+def check_audio(path):
+    if not path.exists():
+        die(f"找不到音频文件：{path}", ["确认路径拼写", "可以先用 python tests/tts_demo.py 生成一段 reply.wav 来测试"])
+    if path.stat().st_size < 1024:
+        die("音频文件过小，可能是空文件", ["换一段真实录音"])
+    return path.suffix.lstrip(".").lower() or "wav"
+
+
+def asr_token_plan(key, path, fmt):
+    b64 = base64.b64encode(path.read_bytes()).decode()
+    payload = {
+        "model": os.getenv("ASR_MODEL", "qwen-audio-3.0-asr-flash"),
+        "input": {
+            "messages": [{
+                "role": "user",
+                "content": [{"type": "input_audio", "input_audio": {"data": f"data:{MIME.get(fmt, 'audio/' + fmt)};base64,{b64}"}}],
+            }]
+        },
+        "parameters": {"format": fmt, "sample_rate": 16000, "language_hints": ["zh"]},
+    }
+    r = requests.post(
+        TOKEN_PLAN_URL,
+        headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+        json=payload,
+        timeout=300,
+    )
+    if r.status_code != 200:
+        die(f"识别接口返回 {r.status_code}", [str(r.text)[:300], "确认套餐 Key 有效、音频不超过 5 分钟"])
+    data = r.json()
+    text = data.get("output", {}).get("text")
+    if not text:
+        text = data.get("output", {}).get("sentence", {}).get("text", "")
+    return text, data.get("usage", {})
+
+
+def asr_dashscope(key, path):
     import dashscope
-    from dashscope.audio.asr import Recognition, RecognitionCallback
-except ImportError:
-    die("没装 dashscope",
-        "先在项目根目录执行 source .venv/bin/activate 激活虚拟环境，"
-        "再执行 pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple")
+    from dashscope.audio.asr import Recognition
 
-# ---------- 2. 读 .env ----------
-try:
-    from dotenv import load_dotenv
-    load_dotenv(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env"))
-except ImportError:
-    pass
+    dashscope.api_key = key
+    import wave
+    with wave.open(str(path), "rb") as w:
+        ch, rate = w.getnchannels(), w.getframerate()
+    if ch != 1 or rate != 16000:
+        die(f"音频须为 16kHz 单声道，当前 {rate}Hz / {ch} 声道",
+            [f"先转换：afconvert -f WAVE -d LEI16@16000 -c 1 '{path}' reply16k.wav", "再用本脚本识别 reply16k.wav"])
+    model = os.getenv("ASR_MODEL", "paraformer-realtime-v2")
+    rec = Recognition(model=model, format="pcm", sample_rate=16000, callback=None)
+    result = rec.call(str(path))
+    return (result.get_sentence() or {}).get("text", "") if isinstance(result, dict) else str(result)
 
-api_key = (os.getenv("DASHSCOPE_API_KEY") or "").strip()
-if not api_key or "在这里填" in api_key or not api_key.startswith("sk-"):
-    die("DASHSCOPE_API_KEY 没有配置",
-        "打开项目根目录的 .env 文件，把 DASHSCOPE_API_KEY= 后面换成组长给的真实 Key（sk- 开头）")
 
-# ---------- 3. 参数与音频检查 ----------
-if len(sys.argv) < 2:
-    die("缺少录音文件参数", "用法：python tests/asr_demo.py 你的录音.wav")
+def main():
+    if len(sys.argv) < 2:
+        die("缺少音频路径参数", ["用法：python tests/asr_demo.py reply.wav"])
+    path = pathlib.Path(sys.argv[1]).expanduser().resolve()
+    fmt = check_audio(path)
 
-wav_path = sys.argv[1]
-if not os.path.exists(wav_path):
-    die("找不到文件：" + wav_path, "确认路径写对了，文件名带空格时要加引号")
+    key = os.getenv("DASHSCOPE_API_KEY", "").strip()
+    if not key or "在这里填" in key:
+        die("DASHSCOPE_API_KEY 没有配置", ["打开项目根目录 .env，填入真实 Key"])
 
-f = wave.open(wav_path, "rb")
-rate = f.getframerate()
-channels = f.getnchannels()
-if rate != 16000:
-    die("采样率是 %d Hz，需要 16000 Hz" % rate,
-        "转换命令：afconvert -f WAVE -d LEI16@16000 -c 1 \"%s\" tests/sample.wav" % wav_path)
-if channels != 1:
-    die("声道数是 %d，需要单声道" % channels,
-        "转换命令：afconvert -f WAVE -d LEI16@16000 -c 1 \"%s\" tests/sample.wav" % wav_path)
+    print(f"[1/3] 音频：{path.name}（{path.stat().st_size/1024:.0f} KB，格式 {fmt}）")
+    if key.startswith("sk-sp-"):
+        text, usage = asr_token_plan(key, path, fmt)
+        print(f"[2/3] 套餐模式识别完成，音频时长 {usage.get('duration', '—')} 秒")
+    else:
+        text = asr_dashscope(key, path)
+        print("[2/3] 按量模式识别完成")
+    print(f"[3/3] 识别结果：{text}")
+    print("\n成功标志：上面打出来的是一句通顺的中文，和录音内容一致。")
 
-class CB(RecognitionCallback):
-    def on_event(self, result):  # noqa: N802
-        sent = result.get_sentence()
-        if sent and sent.get("text"):
-            print("识别:", sent["text"])
 
-dashscope.api_key = api_key
-rec = Recognition(model="paraformer-realtime-v2", format="pcm", sample_rate=16000, callback=CB())
-rec.start()
-while True:
-    chunk = f.readframes(3200)  # 每块 200ms
-    if not chunk:
-        break
-    rec.send_audio_frame(chunk)
-rec.stop()
-
-print("\n[完成] 以上是识别结果。如果中间出现报错，先确认：Key 是否有效、"
-      "百炼控制台里“paraformer-realtime-v2”是否已开通、余额是否充足。")
+if __name__ == "__main__":
+    main()
