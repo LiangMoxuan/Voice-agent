@@ -18,15 +18,38 @@
   <p class="muted">骨架已就绪（Day1）。语音链路由 A 接入，Agent 由 B 接入。</p>
 
   <div class="card">
-    <button id="btn" disabled>发起模拟外呼（待接入）</button>
+    <button id="btn-call" style="background:#1677ff;color:#fff;border-color:#1677ff">发起模拟外呼</button>
+    <button id="btn-hangup">挂断</button>
     <div id="status">后端健康检查：检测中…</div>
   </div>
 
   <script>
+    var healthLine = '';
     fetch('/health').then(function (r) { return r.json(); }).then(function (d) {
-      document.getElementById('status').textContent = '后端健康检查：' + JSON.stringify(d);
+      healthLine = '后端健康检查：' + JSON.stringify(d);
+      document.getElementById('status').textContent = healthLine;
     }).catch(function (e) {
-      document.getElementById('status').textContent = '后端未连通：' + e;
+      healthLine = '后端未连通：' + e;
+      document.getElementById('status').textContent = healthLine;
+    });
+
+    // Day2 假按钮：只做界面反馈，不建立音频连接。Day3 起由 A 替换为真实链路。
+    var log = [];
+    function show() {
+      document.getElementById('status').textContent = healthLine + '\n---\n' + log.join('\n');
+    }
+    function stamp() {
+      var d = new Date();
+      return ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2)
+           + ':' + ('0' + d.getSeconds()).slice(-2);
+    }
+    document.getElementById('btn-call').addEventListener('click', function () {
+      log.push('[' + stamp() + '] 已发起模拟外呼（界面占位，音频链路待 Day3 接入）');
+      show();
+    });
+    document.getElementById('btn-hangup').addEventListener('click', function () {
+      log.push('[' + stamp() + '] 已挂断（界面占位）');
+      show();
     });
   </script>
   <!-- Day3 起由 A 接入 app.js（WebRTC / WebSocket 音频） -->
