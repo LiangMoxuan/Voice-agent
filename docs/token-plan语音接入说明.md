@@ -76,3 +76,24 @@ Content-Type: application/json
 2. `404 Model not exist`：模型名不在套餐里，见上表。
 3. 合成成功但下载失败：音频 URL 过期，重新合成。
 4. 识别结果为空：确认 `parameters.format` 与音频真实格式一致。
+
+## 七、实时流式端点实测（2026-11-13 补测，重要）
+
+第五节的疑问已经解开：**套餐支持实时流式识别，不必退回"分段录音 + 非实时识别"。**
+
+| 项目 | 实测结果 |
+|---|---|
+| 端点 | `wss://token-plan.cn-beijing.maas.aliyuncs.com/api-ws/v1/realtime?model=qwen-audio-3.0-realtime-plus` |
+| 握手 | 成功，服务端主动下发 `session.created` |
+| session.created 自带配置 | `modalities: ["text","audio"]`、`turn_detection: server_vad`、`silence_duration_ms: 800` |
+| 发 4 秒 16k PCM 分片（每 100 ms 一包，base64） | 收到 `session.updated` → `input_audio_buffer.speech_started` → 连续 `conversation.item.input_audio_transcription.delta` |
+| 流式增量效果 | `stash` 字段逐段变长："您好" → "您好，我是京东" → … → "您好，我是京东客服小智，请问您是张先生本人吗" |
+
+**结论与影响**：
+
+1. A 的语音链路可以按指南第 7.3 / 7.4 节的原方案做，**不用降级**；
+2. 服务端自带 VAD（800 ms 静音判停），本地 `silero-vad` 仍建议保留用于"打断"（第 7.4 节要求），两者不冲突；
+3. 时延口径不变：仍按第 7.5 节 `t1 − t0` 计，`t0` 取 VAD 判定的 speech_end；
+4. 该端点语音识别与合成共用一把 Key，**不需要另外申请 cosyvoice / paraformer**。
+
+**尚未验证的部分**（不要当成已结论）：完整一轮的 `...transcription.completed` 终稿事件在 12 秒窗口内没等到，只确认了 delta 流式；`modalities` 含 `audio` 意味着可能也能直接回语音，但本次只测了 `text`。
