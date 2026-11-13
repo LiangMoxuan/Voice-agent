@@ -1,11 +1,16 @@
 import pyaudio
 import wave
+from datetime import datetime
 
+# 录音参数
 CHUNK = 1024
 FORMAT = pyaudio.paInt16
 CHANNELS = 1
 RATE = 16000
-WAVE_OUTPUT_FILENAME = "output.wav"
+
+# 时间戳命名，不会覆盖旧录音
+timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+WAVE_OUTPUT_FILENAME = f"recording_{timestamp}.wav"
 
 input("🎤 按下回车键开始录音 >>>")
 
